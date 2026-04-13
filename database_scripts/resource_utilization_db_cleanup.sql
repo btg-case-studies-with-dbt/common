@@ -1,11 +1,19 @@
 -- ============================================================
--- 999_teardown.sql
--- Tears down everything created by 000_setup_all.sql.
--- THREE LEVELS — run only what you need:
+-- resource_utilization_db_cleanup.sql
+-- THREE SECTIONS — run only what you need.
 --
---   LEVEL 1: TRUNCATE all tables   — wipes all data, keeps structure
---   LEVEL 2: DROP all tables       — removes tables and indexes
---   LEVEL 3: DROP schemas and roles — removes everything
+--   SECTION 1: BRONZE DATA (btg_resource_utilization)
+--     Level 1: TRUNCATE all bronze tables — wipes data, keeps structure
+--     Level 2: DROP all bronze tables — removes tables and indexes
+--     Level 3: DROP raw_bronze schema — removes everything
+--
+--   SECTION 2: DBT SCHEMAS (btg_resource_utilization)
+--     Drops all dbt-created schemas — personal, dev, snapshots, packages
+--     Run after Section 1 Level 3 for a full dev database reset
+--
+--   SECTION 3: PROD DATABASE
+--     Drops the entire prod_resource_utilization_postgres database
+--     Run as superuser connected to a different database
 --
 -- WARNING: These operations are IRREVERSIBLE.
 -- Run each section deliberately — do not run the whole file at once.
@@ -13,11 +21,12 @@
 
 
 -- ============================================================
--- LEVEL 1: TRUNCATE ALL TABLES
--- Wipes all data from every bronze table.
--- Keeps table structure, indexes, and constraints intact.
--- Use this to reset data without rebuilding the schema.
+-- SECTION 1: BRONZE DATA — btg_resource_utilization
 -- ============================================================
+
+-- ── Level 1: TRUNCATE all bronze tables ──────────────────────
+-- Wipes all data. Keeps table structure, indexes, and constraints.
+-- Use this to reset data without rebuilding the schema.
 
 /*
 
@@ -37,12 +46,8 @@ TRUNCATE TABLE raw_bronze.quota_customer_rate_limit_requests       RESTART IDENT
 */
 
 
--- ============================================================
--- LEVEL 2: DROP ALL TABLES
--- Removes all tables and their indexes from raw_bronze.
--- CASCADE drops any dependent views or foreign key constraints.
--- Use this when you want to rebuild the schema from scratch.
--- ============================================================
+-- ── Level 2: DROP all bronze tables ──────────────────────────
+-- Removes tables and indexes. CASCADE drops dependent objects.
 
 /*
 
@@ -62,21 +67,50 @@ DROP TABLE IF EXISTS raw_bronze.quota_customer_rate_limit_requests       CASCADE
 */
 
 
+-- ── Level 3: DROP raw_bronze schema ──────────────────────────
+
+/*
+
+DROP SCHEMA IF EXISTS raw_bronze CASCADE;
+
+*/
+
+
 -- ============================================================
--- LEVEL 3: DROP SCHEMAS AND ROLES
--- Removes all schemas created by 001_setup_database.sql.
--- CASCADE drops all tables, views, and objects inside each schema.
--- Run LEVEL 2 first, or use CASCADE to drop everything together.
+-- SECTION 2: DBT SCHEMAS — btg_resource_utilization
+-- Drops all schemas created by dbt — personal, dev, snapshots, packages.
+-- CASCADE removes all tables, views, and objects inside each schema.
 -- ============================================================
 
 /*
 
--- Drop all schemas (CASCADE removes all objects inside)
-DROP SCHEMA IF EXISTS raw_bronze        CASCADE;
-DROP SCHEMA IF EXISTS seeds             CASCADE;
-DROP SCHEMA IF EXISTS staging_silver    CASCADE;
-DROP SCHEMA IF EXISTS staging_silver_ds CASCADE;
-DROP SCHEMA IF EXISTS mart_gold         CASCADE;
+-- Personal schemas (dbt_kanja_*)
+DROP SCHEMA IF EXISTS dbt_kanja                    CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_staging_silver     CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_mart_gold          CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_seeds              CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_snapshots          CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_elementary         CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_dbt_project_evaluator CASCADE;
+DROP SCHEMA IF EXISTS dbt_kanja_dbt_test__audit    CASCADE;
+DROP SCHEMA IF EXISTS dbt_test__audit              CASCADE;
+
+-- Dev schemas (dev_*)
+DROP SCHEMA IF EXISTS dev_staging_silver           CASCADE;
+DROP SCHEMA IF EXISTS dev_mart_gold                CASCADE;
+DROP SCHEMA IF EXISTS dev_seeds                    CASCADE;
+DROP SCHEMA IF EXISTS dev_snapshots                CASCADE;
+DROP SCHEMA IF EXISTS dev_elementary               CASCADE;
+DROP SCHEMA IF EXISTS dev_dbt_project_evaluator    CASCADE;
+
+-- Shared schemas
+DROP SCHEMA IF EXISTS snapshots                    CASCADE;
+
+-- Leftover schemas from old prod approach (if any)
+DROP SCHEMA IF EXISTS staging_silver               CASCADE;
+DROP SCHEMA IF EXISTS mart_gold                    CASCADE;
+DROP SCHEMA IF EXISTS seeds                        CASCADE;
+DROP SCHEMA IF EXISTS prod                         CASCADE;
 
 -- Drop all roles
 DROP ROLE IF EXISTS data_engineer;
@@ -89,17 +123,31 @@ DROP ROLE IF EXISTS partner_dw_engineer;
 
 
 -- ============================================================
--- VERIFICATION
--- Run after any level to confirm what remains.
+-- SECTION 3: PROD DATABASE — prod_resource_utilization_postgres
+-- Run as superuser connected to a different database (e.g. postgres).
+-- WARNING: Drops the entire prod database — irreversible.
 -- ============================================================
 
--- Check remaining schemas
+/*
+
+DROP DATABASE IF EXISTS prod_resource_utilization_postgres;
+
+*/
+
+
+-- ============================================================
+-- VERIFICATION
+-- Run after any section to confirm what remains.
+-- ============================================================
+
+-- Check remaining schemas in dev database
 SELECT schema_name
 FROM information_schema.schemata
-WHERE schema_name IN ('raw_bronze','seeds','staging_silver','staging_silver_ds','mart_gold')
+WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'public')
+AND schema_name NOT LIKE 'pg_%'
 ORDER BY schema_name;
 
--- Check remaining tables
+-- Check remaining tables in raw_bronze
 SELECT schemaname, tablename
 FROM pg_tables
 WHERE schemaname = 'raw_bronze'
@@ -108,5 +156,5 @@ ORDER BY tablename;
 -- Check remaining roles
 SELECT rolname
 FROM pg_roles
-WHERE rolname IN ('data_engineer','analytics_engineer','data_scientist','business_user','partner_dw_engineer')
+WHERE rolname IN ('data_engineer', 'analytics_engineer', 'data_scientist', 'business_user', 'partner_dw_engineer')
 ORDER BY rolname;

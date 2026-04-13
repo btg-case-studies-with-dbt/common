@@ -41,12 +41,12 @@
 -- Source: 001_setup_database.sql
 -- ============================================================
 
+
+
 -- ── Schemas ──────────────────────────────────────────────────
 CREATE SCHEMA IF NOT EXISTS raw_bronze;        -- raw data, never modified
-CREATE SCHEMA IF NOT EXISTS seeds;             -- dbt-managed static lookup tables
-CREATE SCHEMA IF NOT EXISTS staging_silver;    -- dbt transformation models
-CREATE SCHEMA IF NOT EXISTS staging_silver_ds; -- data science model outputs
-CREATE SCHEMA IF NOT EXISTS mart_gold;         -- business-ready metrics
+-- All other schemas (seeds, snapshots, staging_silver, mart_gold, dev_*)
+-- are created automatically by dbt on first build.
 
 -- ── Roles ────────────────────────────────────────────────────
 -- The DO block handles IF NOT EXISTS — PostgreSQL does not support
@@ -75,38 +75,18 @@ $$;
 
 -- mds_user: GRANT ALL so dbt can create tables in every schema
 GRANT ALL ON SCHEMA raw_bronze        TO mds_user;
-GRANT ALL ON SCHEMA seeds             TO mds_user;
-GRANT ALL ON SCHEMA staging_silver    TO mds_user;
-GRANT ALL ON SCHEMA staging_silver_ds TO mds_user;
-GRANT ALL ON SCHEMA mart_gold         TO mds_user;
 
 -- data_engineer: full schema access everywhere
 GRANT ALL ON SCHEMA raw_bronze        TO data_engineer;
-GRANT ALL ON SCHEMA seeds             TO data_engineer;
-GRANT ALL ON SCHEMA staging_silver    TO data_engineer;
-GRANT ALL ON SCHEMA staging_silver_ds TO data_engineer;
-GRANT ALL ON SCHEMA mart_gold         TO data_engineer;
 
--- analytics_engineer: read bronze/seeds, full access to silver and gold
-GRANT USAGE ON SCHEMA raw_bronze        TO analytics_engineer;
-GRANT USAGE ON SCHEMA seeds             TO analytics_engineer;
-GRANT ALL   ON SCHEMA staging_silver    TO analytics_engineer;
-GRANT ALL   ON SCHEMA staging_silver_ds TO analytics_engineer;
-GRANT ALL   ON SCHEMA mart_gold         TO analytics_engineer;
+-- analytics_engineer: read bronze only
+GRANT USAGE ON SCHEMA raw_bronze      TO analytics_engineer;
 
--- data_scientist: read everywhere, write only to staging_silver_ds
-GRANT USAGE ON SCHEMA raw_bronze        TO data_scientist;
-GRANT USAGE ON SCHEMA seeds             TO data_scientist;
-GRANT USAGE ON SCHEMA staging_silver    TO data_scientist;
-GRANT ALL   ON SCHEMA staging_silver_ds TO data_scientist;
-GRANT USAGE ON SCHEMA mart_gold         TO data_scientist;
+-- data_scientist: read bronze only
+GRANT USAGE ON SCHEMA raw_bronze      TO data_scientist;
 
--- business_user: gold schema only, read-only
-GRANT USAGE ON SCHEMA mart_gold TO business_user;
-
--- partner_dw_engineer: seeds and staging_silver usage only
-GRANT USAGE ON SCHEMA seeds          TO partner_dw_engineer;
-GRANT USAGE ON SCHEMA staging_silver TO partner_dw_engineer;
+-- partner_dw_engineer: read bronze only
+GRANT USAGE ON SCHEMA raw_bronze      TO partner_dw_engineer;
 
 
 -- ============================================================
@@ -1117,6 +1097,10 @@ WHERE mra.is_active = TRUE
 
 ORDER BY mra.model_variant, mra.source_region;
 
+-- Refresh loaded_at so freshness checks always pass after running this script
+UPDATE raw_bronze.quota_default_rate_limits
+SET loaded_at = CURRENT_TIMESTAMP;
+
 
 -- =============================================================================
 -- TABLE 2: quota_customer_rate_limit_adjustments
@@ -1833,3 +1817,106 @@ INSERT INTO raw_bronze.quota_customer_rate_limit_requests (
 ('ACC010', 'upgrade', 'global',    'claude-sonnet-4_200k_20250514',   'us-west-2',      900,  1800000, 36000000, 'approved',  'james@cloudnative.com','2026-02-01 10:00:00', '2026-02-02 11:00:00', 'rate_limit_requests_feb2026.csv'),
 ('ACC010', 'upgrade', 'regional',  'llama-3.1_70b_20240723',          'us-west-2',      300,  600000,  12000000, 'pending',   'james@cloudnative.com','2026-02-24 10:00:00', '2026-02-24 10:00:00', 'rate_limit_requests_feb2026.csv'),
 ('ACC010', 'downgrade','global',   'claude-3.5-sonnet_200k_20241022', 'us-west-2',      200,  400000,  8000000,  'cancelled', 'james@cloudnative.com','2026-02-18 09:00:00', '2026-02-19 10:00:00', 'rate_limit_requests_feb2026.csv');
+
+
+-- ============================================================
+-- PRODUCTION DATABASE SETUP
+-- Run this section manually to set up the prod database.
+-- Database: prod_resource_utilization_postgres
+--
+-- Steps:
+--   1. Connect to PostgreSQL as superuser
+--   2. Create the database
+--   3. Run this section against the new database
+--
+-- Commands to run first (as superuser):
+--   CREATE DATABASE prod_resource_utilization_postgres OWNER mds_user;
+--   \c prod_resource_utilization_postgres
+--
+-- Note: dbt default generate_schema_name macro produces prod_ prefixed
+-- schema names when target.schema = prod in profiles.yml
+-- ============================================================
+
+/*
+
+-- ── Schemas ──────────────────────────────────────────────────
+CREATE SCHEMA IF NOT EXISTS raw_bronze;
+CREATE SCHEMA IF NOT EXISTS prod_seeds;
+CREATE SCHEMA IF NOT EXISTS prod_snapshots;
+CREATE SCHEMA IF NOT EXISTS prod_staging_silver;
+CREATE SCHEMA IF NOT EXISTS prod_staging_silver_ds;
+CREATE SCHEMA IF NOT EXISTS prod_mart_gold;
+CREATE SCHEMA IF NOT EXISTS prod_elementary;
+CREATE SCHEMA IF NOT EXISTS prod_dbt_project_evaluator;
+
+-- ── Roles (if not already created) ───────────────────────────
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'data_engineer') THEN
+    CREATE ROLE data_engineer;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'analytics_engineer') THEN
+    CREATE ROLE analytics_engineer;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'data_scientist') THEN
+    CREATE ROLE data_scientist;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'business_user') THEN
+    CREATE ROLE business_user;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'partner_dw_engineer') THEN
+    CREATE ROLE partner_dw_engineer;
+  END IF;
+END
+$$;
+
+-- ── Schema-level grants ───────────────────────────────────────
+
+-- mds_user
+GRANT ALL ON SCHEMA raw_bronze                 TO mds_user;
+GRANT ALL ON SCHEMA prod_seeds                 TO mds_user;
+GRANT ALL ON SCHEMA prod_snapshots             TO mds_user;
+GRANT ALL ON SCHEMA prod_staging_silver        TO mds_user;
+GRANT ALL ON SCHEMA prod_staging_silver_ds     TO mds_user;
+GRANT ALL ON SCHEMA prod_mart_gold             TO mds_user;
+GRANT ALL ON SCHEMA prod_elementary            TO mds_user;
+GRANT ALL ON SCHEMA prod_dbt_project_evaluator TO mds_user;
+
+-- data_engineer
+GRANT ALL ON SCHEMA raw_bronze                 TO data_engineer;
+GRANT ALL ON SCHEMA prod_seeds                 TO data_engineer;
+GRANT ALL ON SCHEMA prod_snapshots             TO data_engineer;
+GRANT ALL ON SCHEMA prod_staging_silver        TO data_engineer;
+GRANT ALL ON SCHEMA prod_staging_silver_ds     TO data_engineer;
+GRANT ALL ON SCHEMA prod_mart_gold             TO data_engineer;
+GRANT ALL ON SCHEMA prod_elementary            TO data_engineer;
+GRANT ALL ON SCHEMA prod_dbt_project_evaluator TO data_engineer;
+
+-- analytics_engineer
+GRANT USAGE ON SCHEMA raw_bronze                 TO analytics_engineer;
+GRANT ALL   ON SCHEMA prod_seeds                 TO analytics_engineer;
+GRANT USAGE ON SCHEMA prod_snapshots             TO analytics_engineer;
+GRANT ALL   ON SCHEMA prod_staging_silver        TO analytics_engineer;
+GRANT ALL   ON SCHEMA prod_staging_silver_ds     TO analytics_engineer;
+GRANT ALL   ON SCHEMA prod_mart_gold             TO analytics_engineer;
+GRANT USAGE ON SCHEMA prod_elementary            TO analytics_engineer;
+GRANT USAGE ON SCHEMA prod_dbt_project_evaluator TO analytics_engineer;
+
+-- data_scientist
+GRANT USAGE ON SCHEMA raw_bronze                 TO data_scientist;
+GRANT USAGE ON SCHEMA prod_seeds                 TO data_scientist;
+GRANT USAGE ON SCHEMA prod_snapshots             TO data_scientist;
+GRANT USAGE ON SCHEMA prod_staging_silver        TO data_scientist;
+GRANT ALL   ON SCHEMA prod_staging_silver_ds     TO data_scientist;
+GRANT USAGE ON SCHEMA prod_mart_gold             TO data_scientist;
+GRANT USAGE ON SCHEMA prod_elementary            TO data_scientist;
+
+-- business_user
+GRANT USAGE ON SCHEMA prod_mart_gold  TO business_user;
+GRANT USAGE ON SCHEMA prod_seeds      TO business_user;
+
+-- partner_dw_engineer
+GRANT USAGE ON SCHEMA prod_seeds            TO partner_dw_engineer;
+GRANT USAGE ON SCHEMA prod_staging_silver   TO partner_dw_engineer;
+
+*/
