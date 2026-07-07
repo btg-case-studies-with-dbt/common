@@ -1,6 +1,29 @@
 {
   "models": [
     {
+      "model_resource_name": "anthropic/claude-sonnet-4",
+      "model_display_name": "claude-sonnet-4",
+      "model_version": "20250514",
+      "publisher_name": "Anthropic",
+      "model_family": "claude-4",
+      "model_task": "text-generation",
+      "is_open_source": false,
+      "inference_scope": "global",
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "accelerator_type": "H100",
+      "accelerators_per_replica": 2,
+      "memory_gb": 80,
+      "replicas": 20,
+      "max_concurrency": 150,
+      "ideal_concurrency": 120,
+      "max_rps": 55,
+      "tokens_per_second": 1800000,
+      "avg_tokens_per_request": 2800,
+      "avg_latency_seconds": 0.19,
+      "model_variant": "claude-sonnet-4_200k_20250514",
+      "snapshot_date": "2025-02-01"
+    },
+    {
       "model_resource_name": "openai/gpt-4o",
       "model_display_name": "gpt-4o",
       "model_version": "2024-05-13",
